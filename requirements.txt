@@ -3,8 +3,10 @@ gunicorn
 openai
 pandas
 numpy
+python-dotenv
 scikit-learn
 matplotlib
 seaborn
 joblib
 pickle-mixin
+
