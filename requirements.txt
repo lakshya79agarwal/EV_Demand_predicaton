@@ -1,5 +1,6 @@
 flask
 gunicorn
+openai
 pandas
 numpy
 scikit-learn
