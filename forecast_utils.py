@@ -9,7 +9,7 @@ def generate_forecast_plot(data_file):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=forecast_data['Date'], 
-        y=forecast_data['EV_Demand'], 
+        y=forecast_data['Electric Vehicle (EV) Total'], 
         mode='lines+markers',
         name='EV Demand'
     ))
