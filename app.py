@@ -1,93 +1,234 @@
 import streamlit as st
-import streamlit as st
 import pandas as pd
 import plotly.express as px
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-# 1. Config & Setup
-st.set_page_config(page_title="EV Demand Predictor", layout="wide")
+# ---------------------------------------------------------
+# 1. APP CONFIGURATION
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="EV Demand Dashboard",
+    page_icon="⚡",
+    layout="wide"
+)
 load_dotenv()
 
-# --- DEBUG CHECK ---
-# Priority: Streamlit secrets, then .env / environment variable
-api_key = st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") else None
-api_key = api_key or os.getenv("GOOGLE_API_KEY")
+# Custom CSS for styling
+st.markdown("""
+    <style>
+    .main {
+        background-color: #f5f5f5;
+    }
+    .stMetric {
+        background-color: #ffffff;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 2. SETUP GOOGLE GEMINI
+# ---------------------------------------------------------
+api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 if not api_key:
-    st.error("⚠ GOOGLE_API_KEY is missing from Secrets/Environment. Chat cannot work.")
+    st.sidebar.error("⚠ Google API Key missing! Chat will be disabled.")
 else:
     try:
         genai.configure(api_key=api_key)
     except Exception as e:
-        st.error(f"API Key Configuration Failed: {e}")
+        st.sidebar.error(f"API Key Error: {e}")
 
-# 2. Load Data
+# ---------------------------------------------------------
+# 3. DATA LOADING & PROCESSING
+# ---------------------------------------------------------
+REQUIRED_COLUMNS = [
+    "Date",
+    "State",
+    "Electric Vehicle (EV) Total",
+    "Battery Electric Vehicles (BEVs)",
+    "Plug-In Hybrid Electric Vehicles (PHEVs)"
+]
+
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_csv('preprocessed_ev_data.csv')
-        df['Date'] = pd.to_datetime(df['Date'])
-        df_grouped = df.groupby('Date')['Electric Vehicle (EV) Total'].sum().reset_index()
-        df_grouped = df_grouped.sort_values('Date')
-        return df_grouped
+        df = pd.read_csv("preprocessed_ev_data.csv")
+        # Basic column check
+        missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+        if missing:
+            raise KeyError(f"Missing columns in CSV: {missing}")
+        df["Date"] = pd.to_datetime(df["Date"])
+        return df
+    except FileNotFoundError:
+        return "FILE_NOT_FOUND"
     except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return None
+        return f"ERROR: {e}"
 
-df = load_data()
+raw_df = load_data()
 
-# 3. Display Dashboard
-if df is not None and not df.empty:
-    st.title("🚗 EV Demand Prediction Dashboard")
-    
-    fig = px.line(
-        df,
-        x='Date',
-        y='Electric Vehicle (EV) Total',
-        title='Total EV Demand Over Time'
-    )
-    st.plotly_chart(fig, use_container_width=True)
+if isinstance(raw_df, str):
+    if raw_df == "FILE_NOT_FOUND":
+        st.error("❌ Data file 'preprocessed_ev_data.csv' not found. Please place it in the same folder as app.py.")
+    else:
+        st.error(f"❌ Error loading data: {raw_df}")
+    st.stop()
 
-    # 4. Chat Section
+# ---------------------------------------------------------
+# 4. SIDEBAR FILTERS
+# ---------------------------------------------------------
+st.sidebar.header("Filters")
+
+all_states = sorted(raw_df["State"].unique().tolist())
+selected_state = st.sidebar.multiselect(
+    "Select State",
+    all_states,
+    default=all_states[:1] if all_states else []
+)
+
+# Filter Logic
+if not selected_state:
+    st.sidebar.info("No state selected. Showing all states.")
+    filtered_df = raw_df.copy()
+else:
+    filtered_df = raw_df[raw_df["State"].isin(selected_state)]
+
+if filtered_df.empty:
+    st.warning("No data available for the selected filters.")
+    st.stop()
+
+# Aggregate Data by Date
+daily_agg = (
+    filtered_df
+    .groupby("Date")[
+        [
+            "Electric Vehicle (EV) Total",
+            "Battery Electric Vehicles (BEVs)",
+            "Plug-In Hybrid Electric Vehicles (PHEVs)"
+        ]
+    ]
+    .sum()
+    .reset_index()
+    .sort_values("Date")
+)
+
+# ---------------------------------------------------------
+# 5. MAIN DASHBOARD UI
+# ---------------------------------------------------------
+st.title("⚡ EV Demand Prediction & Analytics")
+
+# Create Tabs
+tab1, tab2, tab3 = st.tabs(["📈 Dashboard", "🤖 AI Analyst", "📄 Raw Data"])
+
+# --- TAB 1: DASHBOARD ---
+with tab1:
+    if not daily_agg.empty:
+        latest_record = daily_agg.iloc[-1]
+        prev_record = daily_agg.iloc[-2] if len(daily_agg) > 1 else latest_record
+
+        total_ev = int(latest_record["Electric Vehicle (EV) Total"])
+        prev_total_ev = int(prev_record["Electric Vehicle (EV) Total"])
+
+        growth = total_ev - prev_total_ev
+        growth_pct = (growth / prev_total_ev * 100) if prev_total_ev > 0 else 0
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric(
+            "Total EV Demand (Selected)",
+            f"{total_ev:,}",
+            delta=f"{growth_pct:.1f}% Growth"
+        )
+        col2.metric(
+            "Battery EVs (BEV)",
+            f"{int(latest_record['Battery Electric Vehicles (BEVs)']):,}"
+        )
+        col3.metric(
+            "Plug-in Hybrids (PHEV)",
+            f"{int(latest_record['Plug-In Hybrid Electric Vehicles (PHEVs)']):,}"
+        )
+    else:
+        st.warning("No aggregated data available for the selected filters.")
+
     st.divider()
-    st.subheader("🤖 AI Chat Analyst")
 
-    # Prepare context from latest data point
-    latest_date = df.iloc[-1]['Date'].strftime('%Y-%m-%d')
-    latest_val = int(df.iloc[-1]['Electric Vehicle (EV) Total'])
-    context = f"Data Context: EV Demand as of {latest_date} is {latest_val:,} vehicles."
+    # Charts Row
+    c1, c2 = st.columns([2, 1])
 
-    user_query = st.chat_input("Ask about the EV demand trends, future predictions, or insights...")
+    with c1:
+        st.subheader("Demand Trend Over Time")
+        if not daily_agg.empty:
+            fig_line = px.line(
+                daily_agg,
+                x="Date",
+                y="Electric Vehicle (EV) Total",
+                markers=True,
+                template="plotly_white",
+                labels={"Electric Vehicle (EV) Total": "Number of Vehicles"}
+            )
+            fig_line.update_traces(line_width=3)
+            st.plotly_chart(fig_line, use_container_width=True)
+        else:
+            st.info("No data to display in the trend chart.")
+
+    with c2:
+        st.subheader("Vehicle Type Split")
+        if not daily_agg.empty:
+            total_bev = daily_agg["Battery Electric Vehicles (BEVs)"].sum()
+            total_phev = daily_agg["Plug-In Hybrid Electric Vehicles (PHEVs)"].sum()
+
+            pie_data = pd.DataFrame({
+                "Type": ["BEV", "PHEV"],
+                "Count": [total_bev, total_phev]
+            })
+
+            fig_pie = px.pie(
+                pie_data,
+                names="Type",
+                values="Count",
+                hole=0.4
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("No data to display in the pie chart.")
+
+# --- TAB 2: AI ANALYST ---
+with tab2:
+    st.subheader("💬 Chat with your Data")
+    st.write("Try questions like:")
+    st.markdown("- What is the peak demand month?")
+    st.markdown("- Compare BEV vs PHEV trends over time.")
+
+    if not daily_agg.empty:
+        latest_date_str = daily_agg.iloc[-1]["Date"].strftime("%Y-%m-%d")
+        latest_val = int(daily_agg.iloc[-1]["Electric Vehicle (EV) Total"])
+        context = (
+            f"Data Context: Analysis of EV Demand from "
+            f"{daily_agg.iloc[0]['Date'].date()} to {latest_date_str}. "
+            f"Latest aggregated demand is {latest_val:,} vehicles. "
+            f"The data is aggregated by date for the selected states."
+        )
+    else:
+        context = "No data selected."
+
+    user_query = st.chat_input("Type your question here...")
 
     if user_query:
-        st.write(f"You: {user_query}")
-        
+        st.chat_message("user").write(user_query)
+
         if not api_key:
-            st.error("❌ API Key missing.")
+            st.error("❌ Please configure GOOGLE_API_KEY in your secrets to use the AI.")
         else:
-            with st.spinner("Connecting to Google AI..."):
-                try:
-                    # PRIMARY MODEL: New fast model
-                    model = genai.GenerativeModel("gemini-2.0-flash")
-                    response = model.generate_content(
-                        f"{context}\n\nThe user asked: {user_query}\n\n"
-                        f"Use the context to answer clearly and briefly."
-                    )
-                    st.write(f"AI: {response.text}")
-                except Exception as e1:
-                    # FALLBACK MODEL: More powerful 1.5 Pro
+            with st.chat_message("assistant"):
+                with st.spinner("Analyzing..."):
                     try:
-                        st.warning(f"⚠ gemini-2.0-flash failed ({e1}), trying gemini-1.5-pro...")
-                        model = genai.GenerativeModel("gemini-1.5-pro")
-                        response = model.generate_content(
-                            f"{context}\n\nThe user asked: {user_query}\n\n"
-                            f"Use the context to answer clearly and briefly."
-                        )
-                        st.write(f"AI: {response.text}")
-                    except Exception as e2:
-                        st.error(f"❌ Chat Failed. Reason: {e2}")
-                        st.write("Check your API Key, model access, or quota in Google AI Studio.")
-else:
-    st.error("Data file not found or is empty. Make sure 'preprocessed_ev_data.csv' exists in the same folder and has a 'Date' and 'Electric Vehicle (EV) Total' column.")
+                        try:
+                            model = genai.GenerativeModel("gemini-1.5-flash")
+                            response = model.generate_content(
+                                f"{context}\n\nUser Question: {user_query}"
+                            )
+                        except Exception:
+                            model = genai.GenerativeModel("gemini-pro")
