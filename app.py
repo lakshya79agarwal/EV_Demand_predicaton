@@ -76,7 +76,8 @@ if df is not None:
                     try:
                         # --- UPDATED MODEL HERE ---
                         # Using 'gemini-pro' instead of 'gemini-1.5-flash' for better compatibility
-                        model = genai.GenerativeModel('gemini-pro')
+                        # Use the latest stable model that is free-tier friendly
+                        model = genai.GenerativeModel('gemini-1.5-flash')
                         
                         # Create prompt
                         full_prompt = f"Context: {summary_context}\n\nUser Question: {user_query}\n\nAnswer as a data analyst:"
