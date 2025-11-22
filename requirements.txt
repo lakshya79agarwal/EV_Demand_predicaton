@@ -3,4 +3,5 @@ pandas
 plotly
 google-generativeai
 python-dotenv
+google-generativeai>=0.7.0
 
