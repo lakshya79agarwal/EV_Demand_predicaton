@@ -27,6 +27,7 @@ def load_data():
         df['Date'] = pd.to_datetime(df['Date'])
         
         # AGGREGATE DATA (Fixes overlapping lines)
+        # We sum up the demand for all counties to get one national total per month
         df_grouped = df.groupby('Date')['Electric Vehicle (EV) Total'].sum().reset_index()
         df_grouped = df_grouped.sort_values('Date')
         return df_grouped
@@ -73,8 +74,9 @@ if df is not None:
             else:
                 with st.spinner("Thinking..."):
                     try:
-                        # Use Gemini Model
-                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        # --- UPDATED MODEL HERE ---
+                        # Using 'gemini-pro' instead of 'gemini-1.5-flash' for better compatibility
+                        model = genai.GenerativeModel('gemini-pro')
                         
                         # Create prompt
                         full_prompt = f"Context: {summary_context}\n\nUser Question: {user_query}\n\nAnswer as a data analyst:"
