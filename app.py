@@ -10,7 +10,6 @@ st.set_page_config(page_title="EV Demand Predictor", layout="wide")
 load_dotenv()
 
 # CONFIGURATION: Setup Google Gemini
-# Try to get key from Streamlit Secrets first, then Environment Variable
 api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 if api_key:
@@ -18,16 +17,28 @@ if api_key:
 else:
     st.warning("⚠️ GOOGLE_API_KEY is missing. Chat feature will not work.")
 
+# --- DEBUGGING: List Available Models in Sidebar ---
+st.sidebar.header("🔧 Debug Menu")
+if api_key:
+    st.sidebar.write("Checking available models...")
+    try:
+        valid_models = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                valid_models.append(m.name)
+        st.sidebar.success(f"Found {len(valid_models)} models")
+        st.sidebar.json(valid_models)
+    except Exception as e:
+        st.sidebar.error(f"Could not list models: {e}")
+# ---------------------------------------------------
+
 # 2. Load and Process Data
 @st.cache_data
 def load_data():
     try:
-        # Load the file
         df = pd.read_csv('preprocessed_ev_data.csv')
         df['Date'] = pd.to_datetime(df['Date'])
-        
-        # AGGREGATE DATA (Fixes overlapping lines)
-        # We sum up the demand for all counties to get one national total per month
+        # AGGREGATE DATA
         df_grouped = df.groupby('Date')['Electric Vehicle (EV) Total'].sum().reset_index()
         df_grouped = df_grouped.sort_values('Date')
         return df_grouped
@@ -50,42 +61,40 @@ if df is not None:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # 4. AI Analysis Section (Powered by Gemini)
+    # 4. AI Analysis Section
     st.divider()
-    st.subheader("🤖 Ask the AI Analyst (Google Gemini)")
+    st.subheader("🤖 Ask the AI Analyst")
 
-    # Prepare summary for the AI
     latest_date = df.iloc[-1]['Date'].strftime('%Y-%m-%d')
     latest_val = int(df.iloc[-1]['Electric Vehicle (EV) Total'])
     summary_context = f"The data shows aggregated EV demand. As of {latest_date}, total demand is {latest_val:,} vehicles."
 
-    # Chat Interface
     user_query = st.chat_input("Ask a question about the trend (e.g., 'Is demand increasing?')")
 
     if user_query:
-        # Show user message
         with st.chat_message("user"):
             st.write(user_query)
 
-        # Generate and show AI response
         with st.chat_message("assistant"):
             if not api_key:
                 st.error("Please set your GOOGLE_API_KEY to use the chat.")
             else:
                 with st.spinner("Thinking..."):
+                    # --- ROBUST MODEL SELECTION ---
                     try:
-                        # --- UPDATED MODEL HERE ---
-                        # Using 'gemini-pro' instead of 'gemini-1.5-flash' for better compatibility
-                        # Use the latest stable model that is free-tier friendly
+                        # 1. Try the Modern Flash Model
                         model = genai.GenerativeModel('gemini-1.5-flash')
-                        
-                        # Create prompt
-                        full_prompt = f"Context: {summary_context}\n\nUser Question: {user_query}\n\nAnswer as a data analyst:"
-                        
-                        response = model.generate_content(full_prompt)
+                        response = model.generate_content(f"Context: {summary_context}\n\nQuestion: {user_query}")
                         st.write(response.text)
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-
+                    
+                    except Exception as e_flash:
+                        # 2. If Flash fails, try 'gemini-pro'
+                        try:
+                            model = genai.GenerativeModel('gemini-pro')
+                            response = model.generate_content(f"Context: {summary_context}\n\nQuestion: {user_query}")
+                            st.write(response.text)
+                            st.caption("Note: Switched to 'gemini-pro' model automatically.")
+                        except Exception as e_pro:
+                            st.error(f"All models failed. Error: {e_flash}")
 else:
     st.error("❌ Could not find 'preprocessed_ev_data.csv'. Make sure it is in the root folder.")
