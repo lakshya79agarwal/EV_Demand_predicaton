@@ -1,100 +1,54 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import os
 import google.generativeai as genai
-from dotenv import load_dotenv
+import os
 
-# 1. Config & Setup
-st.set_page_config(page_title="EV Demand Predictor", layout="wide")
-load_dotenv()
+st.set_page_config(page_title="API Diagnostics")
+st.title("🛠️ Google Gemini API Diagnostics")
 
-# CONFIGURATION: Setup Google Gemini
-api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+# 1. Get the API Key
+api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    # Try getting it from Streamlit secrets if env var fails
+    try:
+        api_key = st.secrets["GOOGLE_API_KEY"]
+    except:
+        pass
 
-if api_key:
+# 2. Check Key Status
+if not api_key:
+    st.error("❌ API Key NOT Found! Check your Render Environment Variables.")
+    st.stop()
+else:
+    st.success(f"✅ API Key Found (starts with: {api_key[:5]}...)")
+
+# 3. Configure Library
+try:
     genai.configure(api_key=api_key)
-else:
-    st.warning("⚠️ GOOGLE_API_KEY is missing. Chat feature will not work.")
+    st.write(f"**Library Version:** `google-generativeai` (Check requirements.txt if old)")
+except Exception as e:
+    st.error(f"Configuration Failed: {e}")
+    st.stop()
 
-# --- DEBUGGING: List Available Models in Sidebar ---
-st.sidebar.header("🔧 Debug Menu")
-if api_key:
-    st.sidebar.write("Checking available models...")
-    try:
-        valid_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                valid_models.append(m.name)
-        st.sidebar.success(f"Found {len(valid_models)} models")
-        st.sidebar.json(valid_models)
-    except Exception as e:
-        st.sidebar.error(f"Could not list models: {e}")
-# ---------------------------------------------------
+# 4. List ALL Available Models
+st.subheader("🔍 Available Models for this Key")
+st.write("Attempting to fetch model list from Google...")
 
-# 2. Load and Process Data
-@st.cache_data
-def load_data():
-    try:
-        df = pd.read_csv('preprocessed_ev_data.csv')
-        df['Date'] = pd.to_datetime(df['Date'])
-        # AGGREGATE DATA
-        df_grouped = df.groupby('Date')['Electric Vehicle (EV) Total'].sum().reset_index()
-        df_grouped = df_grouped.sort_values('Date')
-        return df_grouped
-    except Exception as e:
-        return None
-
-df = load_data()
-
-# 3. Display the Dashboard
-if df is not None:
-    st.title("🚗 EV Demand Prediction Dashboard")
+try:
+    valid_models = []
+    for m in genai.list_models():
+        # We only care about models that can generate content (chat)
+        if 'generateContent' in m.supported_generation_methods:
+            valid_models.append(m.name)
+            st.code(m.name)  # Print each valid model name
     
-    # Show the Plot
-    fig = px.line(
-        df, 
-        x='Date', 
-        y='Electric Vehicle (EV) Total', 
-        title='Total National EV Demand (Aggregated)',
-        labels={'Electric Vehicle (EV) Total': 'Total Vehicles'}
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    if not valid_models:
+        st.error("❌ No chat models found! Your API key might be invalid or has no access.")
+    else:
+        st.success(f"Found {len(valid_models)} working models!")
+        st.info(f"👉 **Recommended Fix:** Update your code to use: `{valid_models[0]}`")
 
-    # 4. AI Analysis Section
-    st.divider()
-    st.subheader("🤖 Ask the AI Analyst")
-
-    latest_date = df.iloc[-1]['Date'].strftime('%Y-%m-%d')
-    latest_val = int(df.iloc[-1]['Electric Vehicle (EV) Total'])
-    summary_context = f"The data shows aggregated EV demand. As of {latest_date}, total demand is {latest_val:,} vehicles."
-
-    user_query = st.chat_input("Ask a question about the trend (e.g., 'Is demand increasing?')")
-
-    if user_query:
-        with st.chat_message("user"):
-            st.write(user_query)
-
-        with st.chat_message("assistant"):
-            if not api_key:
-                st.error("Please set your GOOGLE_API_KEY to use the chat.")
-            else:
-                with st.spinner("Thinking..."):
-                    # --- ROBUST MODEL SELECTION ---
-                    try:
-                        # 1. Try the Modern Flash Model
-                        model = genai.GenerativeModel('gemini-1.5-flash')
-                        response = model.generate_content(f"Context: {summary_context}\n\nQuestion: {user_query}")
-                        st.write(response.text)
-                    
-                    except Exception as e_flash:
-                        # 2. If Flash fails, try 'gemini-pro'
-                        try:
-                            model = genai.GenerativeModel('gemini-pro')
-                            response = model.generate_content(f"Context: {summary_context}\n\nQuestion: {user_query}")
-                            st.write(response.text)
-                            st.caption("Note: Switched to 'gemini-pro' model automatically.")
-                        except Exception as e_pro:
-                            st.error(f"All models failed. Error: {e_flash}")
-else:
-    st.error("❌ Could not find 'preprocessed_ev_data.csv'. Make sure it is in the root folder.")
+except Exception as e:
+    st.error(f"❌ Critical Error fetching models: {e}")
+    st.write("Common causes:")
+    st.write("1. The API Key is for 'Vertex AI' (Google Cloud) instead of 'AI Studio'.")
+    st.write("2. The library version is too old.")
