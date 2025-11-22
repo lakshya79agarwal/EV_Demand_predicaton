@@ -1,13 +1,6 @@
-flask
-gunicorn
-openai
+streamlit
 pandas
-numpy
-python-dotenv
-scikit-learn
-matplotlib
-seaborn
-joblib
-pickle-mixin
 plotly
+google-generativeai
+python-dotenv
 
