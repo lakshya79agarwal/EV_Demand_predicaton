@@ -13,10 +13,30 @@ st.set_page_config(
     page_icon="⚡",
     layout="wide"
 )
+
 load_dotenv()
 
 # ---------------------------------------------------------
-# 2. GOOGLE GEMINI API SETUP (MERGED & IMPROVED)
+# 2. AUTHENTICATION (Security Gate)
+# ---------------------------------------------------------
+# Ensure auth.py is in the same folder
+try:
+    from auth import check_password
+    
+    # If password is incorrect, stop the app here.
+    # The user will only see the login screen.
+    if not check_password():
+        st.stop()
+except ImportError:
+    st.error("❌ 'auth.py' not found. Please ensure the authentication script is in the project folder.")
+    st.stop()
+
+# =========================================================
+# 🚀 MAIN APP STARTS HERE (Only runs if logged in)
+# =========================================================
+
+# ---------------------------------------------------------
+# 3. GOOGLE GEMINI API SETUP
 # ---------------------------------------------------------
 # Priority: Streamlit secrets, then .env / environment variable
 api_key = st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") else None
@@ -46,7 +66,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 3. DATA LOADING & PROCESSING
+# 4. DATA LOADING & PROCESSING
 # ---------------------------------------------------------
 REQUIRED_COLUMNS = [
     "Date",
@@ -82,9 +102,16 @@ if isinstance(raw_df, str):
     st.stop()
 
 # ---------------------------------------------------------
-# 4. SIDEBAR FILTERS
+# 5. SIDEBAR FILTERS
 # ---------------------------------------------------------
 st.sidebar.header("Filters")
+
+# Add a logout button to the sidebar
+if st.sidebar.button("Log Out"):
+    st.session_state["password_correct"] = False
+    st.rerun()
+
+st.sidebar.divider()
 
 all_states = sorted(raw_df["State"].unique().tolist())
 selected_state = st.sidebar.multiselect(
@@ -119,7 +146,7 @@ daily_agg = (
 )
 
 # ---------------------------------------------------------
-# 5. MAIN DASHBOARD UI
+# 6. MAIN DASHBOARD UI
 # ---------------------------------------------------------
 st.title("⚡ EV Demand Prediction & Analytics")
 
@@ -201,7 +228,7 @@ with tab1:
             st.info("No data to display in the pie chart.")
 
 # =======================
-# TAB 2: AI ANALYST (MERGED WITH YOUR CHAT LOGIC)
+# TAB 2: AI ANALYST
 # =======================
 with tab2:
     st.subheader("💬 Chat with your Data")
