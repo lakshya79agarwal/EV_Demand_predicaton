@@ -1,13 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <title>EV Demand Forecast Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <meta charset="UTF-8" />
     <title>EV Demand Prediction & Analytics</title>
 
     <style>
         body {
             background: #0d0d0d;
-            color: white;
+            color: black;
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 20px;
@@ -72,6 +74,19 @@
 </head>
 
 <body>
+    <h1>EV Demand Forecast with OpenAI Insights</h1>
+
+    <div id="forecast_plot"></div>
+    <script>
+        var plotData = { data: [], layout: {} };
+        Plotly.newPlot('forecast_plot', plotData.data, plotData.layout);
+    </script>
+
+    <form method="post">
+        <label>Ask a question about EV forecast:</label><br>
+        <input type="text" name="query" size="80"><br><br>
+        <input type="submit" value="Get Insight">
+    </form>
 
     <h1>⚡ EV Demand Prediction & Analytics</h1>
 
