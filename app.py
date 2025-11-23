@@ -1,6 +1,8 @@
 # /mount/src/ev_demand_predicaton/app.py
 """
-EV Demand Dashboard - Final Robust Version
+EV Demand Dashboard - final corrected version
+
+Save: /mount/src/ev_demand_predicaton/app.py
 
 Requirements:
   pip install streamlit pandas plotly python-dotenv google-generativeai streamlit-gsheets gspread oauth2client
@@ -15,6 +17,7 @@ import plotly.express as px
 import streamlit as st
 import google.generativeai as genai
 from dotenv import load_dotenv
+from streamlit_gsheets import GSheetsConnection
 
 # Optional import for streamlit-gsheets connector type hinting
 try:
@@ -29,7 +32,7 @@ st.set_page_config(page_title="EV Demand Dashboard", page_icon="⚡", layout="wi
 load_dotenv()
 
 # ---------------------------------------------------------
-# 2. CUSTOM CSS (Styling metrics and background)
+# 2. CUSTOM CSS (black metric background)
 # ---------------------------------------------------------
 st.markdown(
     """
@@ -57,7 +60,7 @@ st.markdown(
 )
 
 # ---------------------------------------------------------
-# 3. AUTHENTICATION (Optional)
+# 3. AUTHENTICATION (optional)
 # ---------------------------------------------------------
 try:
     from auth import check_password
@@ -65,9 +68,8 @@ try:
     if not check_password():
         st.stop()
 except ImportError:
-    # If auth.py doesn't exist, we skip auth but warn the user locally
-    # st.warning("⚠️ 'auth.py' not found. Skipping login check.")
-    pass
+    st.error("❌ 'auth.py' not found — add an auth.py with a check_password() function to enable auth.")
+    st.stop()
 
 # ---------------------------------------------------------
 # 4. GOOGLE GENERATIVE AI SETUP
@@ -92,6 +94,7 @@ REQUIRED_COLUMNS = [
     "Plug-In Hybrid Electric Vehicles (PHEVs)",
 ]
 
+
 @st.cache_data
 def load_data(path: str = "preprocessed_ev_data.csv"):
     try:
@@ -99,7 +102,6 @@ def load_data(path: str = "preprocessed_ev_data.csv"):
         if "Date" not in df.columns:
             raise ValueError("Missing 'Date' column in CSV.")
         df["Date"] = pd.to_datetime(df["Date"])
-        
         missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
         if missing:
             raise ValueError(f"Required columns missing from CSV: {missing}")
@@ -107,30 +109,27 @@ def load_data(path: str = "preprocessed_ev_data.csv"):
     except Exception as e:
         return str(e)
 
+
 raw_df = load_data()
 if isinstance(raw_df, str):
     st.error(f"❌ Error loading data: {raw_df}")
     st.stop()
 
 # ---------------------------------------------------------
-# 6. GSHEETS CONNECTION HELPER
+# 6. GSheets connection helper (modern -> experimental -> gspread fallback)
 # ---------------------------------------------------------
 def get_gsheets_conn():
-    """
-    Tries to get a GSheets connection using available methods:
-    1. st.connections (Streamlit >= 1.28)
-    2. st.experimental_connection (Older Streamlit)
-    3. gspread (Manual fallback using secrets)
-    """
-    
+    last_exc = None
+
     # 1) Modern Streamlit connections API
     try:
         if hasattr(st, "connections") and hasattr(st.connections, "connect"):
+            # If a connector type is available (streamlit_gsheets), pass it; otherwise rely on configured connector name.
             if GSheetsConnection:
                 return st.connections.connect("gsheets", type=GSheetsConnection)
             return st.connections.connect("gsheets")
-    except Exception:
-        pass
+    except Exception as e:
+        last_exc = e
 
     # 2) Older experimental API
     try:
@@ -138,8 +137,8 @@ def get_gsheets_conn():
             if GSheetsConnection:
                 return st.experimental_connection("gsheets", type=GSheetsConnection)
             return st.experimental_connection("gsheets")
-    except Exception:
-        pass
+    except Exception as e:
+        last_exc = e
 
     # 3) Fallback: gspread using a service account in secrets or env
     try:
@@ -173,9 +172,10 @@ def get_gsheets_conn():
             "or env GCP_SERVICE_ACCOUNT_JSON, AND spreadsheet id in secrets['gsheets']['spreadsheet_id'] or env GSHEETS_SPREADSHEET_ID."
         )
 
-    # Build wrapper that mimics the read/update interface
+    # Build wrapper that mimics the read/update interface used in the app
     class GSpreadWrapper:
-        def __init__(self, sa_info, spreadsheet_id):
+        def _init_(self, sa_info, spreadsheet_id):
+            # service_account_from_dict is available in newer gspread versions
             try:
                 self.client = gspread.service_account_from_dict(sa_info)
             except Exception:
@@ -208,6 +208,7 @@ def get_gsheets_conn():
             if data is None:
                 raise ValueError("No data provided to update()")
             ws = self._sheet(worksheet)
+            # Clear and update
             ws.clear()
             vals = [list(data.columns)] + data.fillna("").astype(str).values.tolist()
             ws.update(vals)
@@ -225,9 +226,8 @@ tab1, tab2, tab3, tab4 = st.tabs(["📈 Dashboard", "🤖 AI Analyst", "📄 Raw
 # Sidebar filters
 st.sidebar.header("Filters")
 if st.sidebar.button("Log Out"):
-    if "password_correct" in st.session_state:
-        st.session_state["password_correct"] = False
-    st.rerun() # Updated from experimental_rerun
+    st.session_state["password_correct"] = False
+    st.experimental_rerun()
 st.sidebar.divider()
 
 all_states = sorted(raw_df["State"].unique().tolist())
@@ -281,33 +281,64 @@ with tab2:
         if api_key:
             with st.chat_message("assistant"):
                 try:
-                    # Attempt to find a valid model
-                    chosen = "gemini-2.0-flash" # Default
-                    
-                    # Try listing models if possible
+                    # Attempt to list available models to avoid 404s
+                    available_names = []
+                    chosen = None
+                    preferred_models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash-001", "gemini-1.5-pro-001"]
+
                     try:
                         if hasattr(genai, "list_models"):
-                            preferred = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
-                            available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                            
-                            for p in preferred:
-                                for a in available:
-                                    if p in a:
-                                        chosen = a
-                                        break
-                                if chosen != "gemini-2.0-flash": break
+                            resp = genai.list_models()
+                            model_objs = resp.get("models") if isinstance(resp, dict) else resp
+                            for m in model_objs or []:
+                                name = getattr(m, "name", None) or (m.get("name") if isinstance(m, dict) else None)
+                                if name:
+                                    available_names.append(name)
                     except Exception:
-                        pass
+                        # Cannot list models (permission or old client); fall back to defaults
+                        available_names = []
 
-                    # Generate content
-                    model = genai.GenerativeModel(chosen)
-                    response = model.generate_content(f"User asked: {user_query}. Context: EV Data.")
-                    st.write(response.text)
-                    
+                    # choose preferred if available
+                    for p in preferred_models:
+                        for n in available_names:
+                            if p in n:
+                                chosen = n
+                                break
+                        if chosen:
+                            break
+
+                    # final fallbacks
+                    if chosen is None:
+                        # try the modern gemini-2.5-flash (without suffix) as fallback
+                        chosen = "gemini-2.5-flash"
+
+                    ai_text = None
+                    # Try older SDK style first
+                    if hasattr(genai, "GenerativeModel"):
+                        model = genai.GenerativeModel(chosen)
+                        # Some older clients use generate_content, some use generate_text - try both
+                        try:
+                            response = model.generate_content(f"User asked: {user_query}. Context: EV Data.")
+                            ai_text = getattr(response, "text", None) or getattr(response, "output", None) or str(response)
+                        except Exception:
+                            # try alternate method
+                            try:
+                                response = model.generate(f"User asked: {user_query}. Context: EV Data.")
+                                ai_text = getattr(response, "text", None) or getattr(response, "output", None) or str(response)
+                            except Exception as e:
+                                raise e
+                    elif hasattr(genai, "generate_text"):
+                        response = genai.generate_text(model=chosen, input=f"User asked: {user_query}. Context: EV Data.")
+                        ai_text = getattr(response, "text", None) or getattr(response, "output", None) or str(response)
+                    else:
+                        ai_text = "AI client library is present but API shape is unknown. Check google.generativeai version."
+
+                    st.write(f"*Model used:* {chosen}")
+                    st.write(ai_text)
                 except Exception as e:
                     st.error(f"AI Error: {e}")
         else:
-            st.info("No API key found for the AI model. Set GOOGLE_API_KEY in Streamlit secrets.")
+            st.info("No API key found for the AI model. Set GOOGLE_API_KEY in Streamlit secrets or environment variables.")
 
 # --- TAB 3: RAW DATA ---
 with tab3:
@@ -329,12 +360,11 @@ with tab4:
 
                 existing_data = None
                 try:
-                    # ttl=0 or low ttl ensures we see fresh data
-                    existing_data = conn.read(worksheet="Sheet1", usecols=list(range(3)), ttl=0)
+                    existing_data = conn.read(worksheet="Sheet1", usecols=list(range(3)), ttl=5)
                 except Exception:
-                    existing_data = pd.DataFrame(columns=["Date", "Name", "Feedback"])
+                    existing_data = None
 
-                if existing_data is None or existing_data.empty:
+                if existing_data is None:
                     existing_data = pd.DataFrame(columns=["Date", "Name", "Feedback"])
 
                 new_entry = pd.DataFrame(
@@ -348,11 +378,14 @@ with tab4:
                 )
 
                 updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
+
                 conn.update(worksheet="Sheet1", data=updated_df)
 
                 st.success("✅ Feedback saved to Database!")
             except Exception as e:
                 st.error(f"Error saving data: {e}")
                 st.info(
-                    "Make sure you have set up 'connections.gsheets' in Streamlit secrets."
+                    "Make sure you have set up 'connections.gsheets' in Streamlit secrets, or provide gspread service account "
+                    "credentials via secrets['gcp_service_account'] (or env GCP_SERVICE_ACCOUNT_JSON) and spreadsheet id "
+                    "in secrets['gsheets']['spreadsheet_id'] (or env GSHEETS_SPREADSHEET_ID)."
                 )
