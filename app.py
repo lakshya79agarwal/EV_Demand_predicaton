@@ -17,6 +17,7 @@ import plotly.express as px
 import streamlit as st
 import google.generativeai as genai
 from dotenv import load_dotenv
+from streamlit_gsheets import GSheetsConnection
 
 # Optional import for streamlit-gsheets connector type hinting
 try:
