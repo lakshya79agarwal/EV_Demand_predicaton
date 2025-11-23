@@ -10,5 +10,7 @@ sqlalchemy
 passlib[bcrypt]
 python-jose
 st-gsheets-connection
+gspread
+oauth2client
 
 
