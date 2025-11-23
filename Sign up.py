@@ -1,0 +1,275 @@
+"""
+EV Demand Dashboard - CSV-only Streamlit app ready for Google Colab
+Save this file as ev_dashboard_colab.py and run it with `streamlit run ev_dashboard_colab.py`
+In Colab you can run streamlit with: 
+  !pip install streamlit pandas plotly python-dotenv
+  !streamlit run ev_dashboard_colab.py & npx localtunnel --port 8501
+(Or use ngrok/localtunnel to expose the Streamlit UI)
+"""
+
+import os
+import json
+from datetime import datetime
+from pathlib import Path
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# --- App configuration ---
+st.set_page_config(page_title="EV Demand Dashboard", layout="wide")
+
+# Use local 'data' directory so the file works smoothly in Colab
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+FEEDBACK_FILE = DATA_DIR / "feedback_db.json"
+
+# --- Utilities ---
+
+def load_feedback():
+    if FEEDBACK_FILE.exists():
+        try:
+            with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_feedback(entry: dict):
+    items = load_feedback()
+    items.append(entry)
+    with open(FEEDBACK_FILE, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+
+def parse_date_column(df: pd.DataFrame, col: str = "Date") -> pd.DataFrame:
+    if col in df.columns:
+        df[col] = pd.to_datetime(df[col], errors="coerce")
+    return df
+
+
+def generate_sample_data(n_years: int = 5) -> pd.DataFrame:
+    rng = pd.date_range(end=pd.Timestamp.today(), periods=n_years * 12, freq="M")
+    data = []
+    regions = ["North", "South", "East"]
+    base = {"North": 120, "South": 80, "East": 60}
+    for r in regions:
+        for i, d in enumerate(rng):
+            month = d.month
+            season = 1 + 0.1 * (month in (10, 11, 12))
+            trend = 1 + 0.02 * (i / 12)
+            sales = max(0, int(base[r] * season * trend + (5 - (i % 10))))
+            data.append({"Date": d, "Region": r, "Sales": sales})
+    return pd.DataFrame(data)
+
+
+# --- Authentication / password check ---
+
+def check_password():
+    USERS_FILE = DATA_DIR / "users_db.json"
+
+    import hashlib
+    def hash_password(pw: str) -> str:
+        return hashlib.sha256(pw.encode("utf-8")).hexdigest()
+
+    def load_users() -> dict:
+        if USERS_FILE.exists():
+            try:
+                with open(USERS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def save_users(users: dict):
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+
+    def create_user(username: str, password: str):
+        users = load_users()
+        if username in users:
+            return False, "Username already exists"
+        users[username] = {
+            "password_hash": hash_password(password),
+            "created_at": datetime.utcnow().isoformat()
+        }
+        save_users(users)
+        return True, "User created"
+
+    users_exist = len(load_users()) > 0
+
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    mode = st.sidebar.radio("Authenticate", ("Login", "Signup"))
+
+    if mode == "Signup":
+        with st.sidebar.form("signup_form"):
+            su = st.text_input("Choose username")
+            sp = st.text_input("Choose password", type="password")
+            sp2 = st.text_input("Confirm password", type="password")
+            ssubmitted = st.form_submit_button("Sign up")
+            if ssubmitted:
+                if not su or not sp:
+                    st.sidebar.error("Enter username & password")
+                elif sp != sp2:
+                    st.sidebar.error("Passwords do not match")
+                else:
+                    ok, msg = create_user(su, sp)
+                    if ok:
+                        st.sidebar.success("User created — login now.")
+                    else:
+                        st.sidebar.error(msg)
+        return False
+
+    # Login
+    def password_entered():
+        username = st.session_state.get("username")
+        password = st.session_state.get("password")
+        users = load_users()
+        if username in users and users[username]["password_hash"] == hash_password(password):
+            st.session_state["password_correct"] = True
+            st.session_state.pop("password", None)
+        else:
+            st.session_state["password_correct"] = False
+            st.error("Incorrect username or password")
+
+    if not st.session_state["password_correct"]:
+        with st.form("login_form"):
+            st.text_input("Username", key="username")
+            st.text_input("Password", type="password", key="password")
+            st.form_submit_button("Login", on_click=password_entered)
+        return False
+
+    return True
+
+
+# --- Main app ---
+
+def main():
+    st.title("EV Demand Dashboard")
+    st.write("Interactive dashboard for analyzing EV demand. (CSV-only)")
+
+    if not check_password():
+        return
+
+    st.sidebar.header("Data Input")
+
+    uploaded = st.sidebar.file_uploader("Upload CSV (Date, Region, Sales)", type=["csv"])
+
+    if uploaded:
+        try:
+            df = pd.read_csv(uploaded)
+        except Exception as e:
+            st.sidebar.error(f"CSV error: {e}")
+            df = pd.DataFrame()
+    else:
+        df = generate_sample_data(5)
+        st.sidebar.info("Sample data loaded (no CSV uploaded).")
+
+    # Normalize column names
+    if not df.empty:
+        cols_lower = {c.lower(): c for c in df.columns}
+        if "date" in cols_lower:
+            df.rename(columns={cols_lower["date"]: "Date"}, inplace=True)
+        if "region" in cols_lower:
+            df.rename(columns={cols_lower["region"]: "Region"}, inplace=True)
+        if "sales" in cols_lower:
+            df.rename(columns={cols_lower["sales"]: "Sales"}, inplace=True)
+
+    df = parse_date_column(df, "Date")
+
+    if df.empty or not all(col in df.columns for col in ["Date", "Region", "Sales"]):
+        st.error("CSV must contain: Date, Region, Sales")
+        st.stop()
+
+    # Filters
+    min_date, max_date = df["Date"].min(), df["Date"].max()
+    date_range = st.sidebar.date_input("Date range", (min_date, max_date))
+    start_date, end_date = map(pd.to_datetime, date_range)
+
+    regions = sorted(df["Region"].unique())
+    selected_regions = st.sidebar.multiselect("Regions", regions, default=regions)
+
+    agg = st.sidebar.selectbox("Aggregation", ["Monthly", "Quarterly", "Yearly"])
+
+    mask = (
+        (df["Date"] >= start_date)
+        & (df["Date"] <= end_date)
+        & (df["Region"].isin(selected_regions))
+    )
+    df_filtered = df.loc[mask].copy()
+
+    if df_filtered.empty:
+        st.warning("No data in this filter.")
+        st.stop()
+
+    # Aggregation
+    if agg == "Monthly":
+        df_filtered["Period"] = df_filtered["Date"].dt.to_period("M").dt.to_timestamp()
+    elif agg == "Quarterly":
+        df_filtered["Period"] = df_filtered["Date"].dt.to_period("Q").dt.to_timestamp()
+    else:
+        df_filtered["Period"] = df_filtered["Date"].dt.to_period("Y").dt.to_timestamp()
+
+    agg_df = df_filtered.groupby(["Period", "Region"], as_index=False)["Sales"].sum()
+
+    # Charts
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.subheader("Sales Trend")
+        fig = px.line(agg_df, x="Period", y="Sales", color="Region", markers=True)
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("Latest Period Comparison")
+        latest = agg_df[agg_df["Period"] == agg_df["Period"].max()]
+        fig2 = px.bar(latest, x="Region", y="Sales")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    with col2:
+        st.subheader("Metrics")
+        st.metric("Total Sales", int(agg_df["Sales"].sum()))
+        st.metric(f"Avg {agg} Sales", round(agg_df.groupby("Period")["Sales"].sum().mean(), 2))
+
+        st.markdown("---")
+        st.subheader("Download")
+        csv_bytes = df_filtered.to_csv(index=False).encode("utf-8")
+        st.download_button("Download filtered CSV", data=csv_bytes, file_name="ev_filtered.csv", mime="text/csv")
+
+        st.markdown("---")
+        st.subheader("Feedback")
+        with st.form("feedback_form"):
+            name = st.text_input("Name")
+            email = st.text_input("Email")
+            comments = st.text_area("Feedback")
+            submitted = st.form_submit_button("Submit")
+            if submitted:
+                entry = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "name": name,
+                    "email": email,
+                    "comments": comments,
+                    "filters": {
+                        "start": str(start_date.date()),
+                        "end": str(end_date.date()),
+                        "regions": selected_regions,
+                        "agg": agg,
+                    },
+                }
+                save_feedback(entry)
+                st.success("Feedback saved.")
+
+    st.subheader("Filtered Data")
+    st.dataframe(df_filtered.sort_values(["Date", "Region"]).reset_index(drop=True))
+
+    with st.expander("Raw Data"):
+        st.dataframe(df.head())
+
+    if st.sidebar.checkbox("Show feedback (admin)"):
+        st.sidebar.write(load_feedback())
+
+
+if __name__ == "__main__":
+    main()
