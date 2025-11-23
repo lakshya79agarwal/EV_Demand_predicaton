@@ -1,18 +1,3 @@
-# /mount/src/ev_demand_predicaton/app.py
-
-"""
-
-EV Demand Dashboard - corrected & complete
-
-Save as: /mount/src/ev_demand_predicaton/app.py
-
-Requirements:
-
-  pip install streamlit pandas plotly python-dotenv google-generativeai streamlit-gsheets
-
-(or adapt to your connector choice)
-
-"""
 
 
 
