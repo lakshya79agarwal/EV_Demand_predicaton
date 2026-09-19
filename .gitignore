@@ -1,0 +1,17 @@
+# Environment and secrets
+.env
+login_details.txt
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Temporary/debug files
+app_full.txt
+notebook_code.txt
+test_forecast.py
+test_forecast_fairfax.py
+
+# Local IDE/settings
+.vscode/
+.idea/
