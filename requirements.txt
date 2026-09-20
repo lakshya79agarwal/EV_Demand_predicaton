@@ -1,9 +1,8 @@
 streamlit
 pandas
 plotly
-google-generativeai
+google-genai
 python-dotenv
-google-generativeai>=0.7.0
 fastapi
 uvicorn
 sqlalchemy
