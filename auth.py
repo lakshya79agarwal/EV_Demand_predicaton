@@ -1,45 +1,102 @@
 import streamlit as st
-import time
+
 
 def check_password():
-    """Returns `True` if the user had a correct password."""
+    """Returns True if the user has successfully logged in."""
 
     def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        if st.session_state["username"] in st.secrets["passwords"] and \
-           st.session_state["password"] == st.secrets["passwords"][st.session_state["username"]]:
+        username = st.session_state.get("username", "")
+        password = st.session_state.get("password", "")
+
+        st.session_state["login_attempted"] = True
+
+        if (
+            username in st.secrets["passwords"]
+            and password == st.secrets["passwords"][username]
+        ):
             st.session_state["password_correct"] = True
-            # Don't store the password in session state
-            del st.session_state["password"]
-            del st.session_state["username"]
+
+            # Never keep the password in session state
+            st.session_state.pop("password", None)
+            st.session_state.pop("username", None)
+
         else:
             st.session_state["password_correct"] = False
 
+    def demo_login():
+        st.session_state["password_correct"] = True
+        st.session_state["login_attempted"] = False
+
     if "password_correct" not in st.session_state:
-        # First run, show inputs
         st.session_state["password_correct"] = False
 
+    if "login_attempted" not in st.session_state:
+        st.session_state["login_attempted"] = False
+
     if not st.session_state["password_correct"]:
-        # Show Login Form
-        st.markdown("""
+
+        st.markdown(
+            """
             <style>
-            .stTextInput {max-width: 400px; margin: 0 auto;}
-            .stButton {text-align: center; margin-top: 20px;}
-            .block-container {padding-top: 5rem;}
+            .stTextInput {
+                max-width: 400px;
+                margin: 0 auto;
+            }
+
+            .block-container {
+                padding-top: 5rem;
+            }
             </style>
-            """, unsafe_allow_html=True)
-        
+            """,
+            unsafe_allow_html=True,
+        )
+
         st.title("🔒 Login Required")
-        st.write("Please log in to access the EV Analytics Dashboard.")
-        
-        st.text_input("Username", key="username")
-        st.text_input("Password", type="password", key="password")
-        st.button("Login", on_click=password_entered)
-        
-        if "password_correct" in st.session_state and st.session_state["password_correct"] == False:
-            st.error("😕 User not known or password incorrect")
-            
+        st.write(
+            "Please log in to access the EV Analytics Dashboard."
+        )
+
+        st.text_input(
+            "Username",
+            key="username"
+        )
+
+        st.text_input(
+            "Password",
+            type="password",
+            key="password"
+        )
+
+        st.button(
+            "🔐 Login",
+            on_click=password_entered
+        )
+
+        if st.session_state["login_attempted"] and not st.session_state["password_correct"]:
+            st.error("😕 Username or password is incorrect.")
+
+        st.divider()
+
+        st.subheader("🚀 Demo Access")
+
+        if "demo" in st.secrets:
+            demo_username = st.secrets["demo"]["username"]
+
+            st.info(
+                f"Demo account: `{demo_username}`\n\n"
+                "Use the button below to access the dashboard "
+                "without entering a password."
+            )
+
+            st.button(
+                "🚀 Demo Login",
+                on_click=demo_login
+            )
+        else:
+            st.warning(
+                "Demo access is not configured in secrets.toml."
+            )
+
         return False
-    else:
-        # Password correct
-        return True
+
+    return True

@@ -1,6 +1,7 @@
 # Environment and secrets
 .env
 login_details.txt
+.streamlit/secrets.toml
 
 # Python cache
 __pycache__/
@@ -15,3 +16,6 @@ test_forecast_fairfax.py
 # Local IDE/settings
 .vscode/
 .idea/
+
+# Generated forecast context
+bob_context.json

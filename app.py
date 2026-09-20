@@ -9,6 +9,7 @@ Requirements:
 """
 
 import os
+from sustainability_insights import ask_sustainability_insight
 import json
 from datetime import datetime
 
@@ -74,9 +75,16 @@ except ImportError:
 # ---------------------------------------------------------
 # 4. GOOGLE GENERATIVE AI SETUP
 # ---------------------------------------------------------
-api_key = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+api_key = (
+    st.secrets.get("GEMINI_API_KEY")
+    or st.secrets.get("GOOGLE_API_KEY")
+    or os.getenv("GEMINI_API_KEY")
+    or os.getenv("GOOGLE_API_KEY")
+)
 if not api_key:
-    st.sidebar.error("⚠ GOOGLE_API_KEY is missing in streamlit secrets or environment variables.")
+    st.sidebar.error(
+    "⚠ Gemini API key is missing in Streamlit secrets or environment variables."
+)
 else:
     try:
         genai.configure(api_key=api_key)
@@ -227,7 +235,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["📈 Dashboard", "🤖 AI Analyst", "📄 Raw
 st.sidebar.header("Filters")
 if st.sidebar.button("Log Out"):
     st.session_state["password_correct"] = False
-    st.experimental_rerun()
+    st.rerun()
 st.sidebar.divider()
 
 all_states = sorted(raw_df["State"].unique().tolist())
@@ -273,7 +281,23 @@ with tab1:
 # --- TAB 2: AI ANALYST ---
 with tab2:
     st.subheader("💬 Chat with your Data")
-    user_query = st.chat_input("Ask about trends...")
+
+    # County selector — scoped to the AI Analyst tab only.
+    # Pulls the county list from the already-loaded dataset so no
+    # extra file read is needed.
+    all_counties = sorted(raw_df["County"].unique().tolist())
+    selected_county = st.selectbox(
+        "Select a county to analyse",
+        all_counties,
+        index=0,
+    )
+
+    st.caption(
+        f"Forecast context will be generated for **{selected_county}** County. "
+        "Change the county above before asking your question."
+    )
+
+    user_query = st.chat_input("Ask about EV adoption trends...")
     if user_query:
         with st.chat_message("user"):
             st.write(user_query)
@@ -281,65 +305,22 @@ with tab2:
         if api_key:
             with st.chat_message("assistant"):
                 try:
-                    # Attempt to list available models to avoid 404s
-                    available_names = []
-                    chosen = None
-                    preferred_models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash-001", "gemini-1.5-pro-001"]
-
-                    try:
-                        if hasattr(genai, "list_models"):
-                            resp = genai.list_models()
-                            model_objs = resp.get("models") if isinstance(resp, dict) else resp
-                            for m in model_objs or []:
-                                name = getattr(m, "name", None) or (m.get("name") if isinstance(m, dict) else None)
-                                if name:
-                                    available_names.append(name)
-                    except Exception:
-                        # Cannot list models (permission or old client); fall back to defaults
-                        available_names = []
-
-                    # choose preferred if available
-                    for p in preferred_models:
-                        for n in available_names:
-                            if p in n:
-                                chosen = n
-                                break
-                        if chosen:
-                            break
-
-                    # final fallbacks
-                    if chosen is None:
-                        # try the modern gemini-2.5-flash (without suffix) as fallback
-                        chosen = "gemini-2.5-flash"
-
-                    ai_text = None
-                    # Try older SDK style first
-                    if hasattr(genai, "GenerativeModel"):
-                        model = genai.GenerativeModel(chosen)
-                        # Some older clients use generate_content, some use generate_text - try both
-                        try:
-                            response = model.generate_content(f"User asked: {user_query}. Context: EV Data.")
-                            ai_text = getattr(response, "text", None) or getattr(response, "output", None) or str(response)
-                        except Exception:
-                            # try alternate method
-                            try:
-                                response = model.generate(f"User asked: {user_query}. Context: EV Data.")
-                                ai_text = getattr(response, "text", None) or getattr(response, "output", None) or str(response)
-                            except Exception as e:
-                                raise e
-                    elif hasattr(genai, "generate_text"):
-                        response = genai.generate_text(model=chosen, input=f"User asked: {user_query}. Context: EV Data.")
-                        ai_text = getattr(response, "text", None) or getattr(response, "output", None) or str(response)
+                    ai_text = ask_sustainability_insight(
+                        user_query=user_query,
+                        county=selected_county,
+                        api_key=api_key,
+                    )
+                    if ai_text.startswith("[Insight Error]"):
+                        st.error(ai_text)
                     else:
-                        ai_text = "AI client library is present but API shape is unknown. Check google.generativeai version."
-
-                    st.write(f"*Model used:* {chosen}")
-                    st.write(ai_text)
+                        st.write(ai_text)
                 except Exception as e:
                     st.error(f"AI Error: {e}")
         else:
-            st.info("No API key found for the AI model. Set GOOGLE_API_KEY in Streamlit secrets or environment variables.")
-
+            st.info(
+    "No Gemini API key found. Set GEMINI_API_KEY or GOOGLE_API_KEY "
+    "in Streamlit secrets or environment variables."
+)
 # --- TAB 3: RAW DATA ---
 with tab3:
     st.dataframe(filtered_df)
